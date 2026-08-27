@@ -2,6 +2,8 @@
 
 A small PHP dashboard for a wall-mounted screen showing Sigenergy solar, grid, battery, export and electricity price status.
 
+![Dashboard preview](dashboard.jpg)
+
 The dashboard is intentionally simple:
 
 - PHP serves the page and API proxy endpoints.
@@ -14,6 +16,7 @@ The dashboard is intentionally simple:
 ```text
 .
 ├── const-sample.env
+├── dashboard.jpg
 ├── README.md
 ├── tools/
 │   ├── sigen-check.php
