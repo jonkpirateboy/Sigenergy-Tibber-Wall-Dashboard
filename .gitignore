@@ -1,0 +1,5 @@
+const.env
+.DS_Store
+*.map
+*.pdf
+var/
