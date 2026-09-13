@@ -71,7 +71,10 @@ function setSpacerSegment(node, value) {
 function setBar(bar, values) {
     if (!bar) return;
 
-    const columns = values.map((value) => value >= MIN_VISIBLE_POWER ? `${Math.max(MIN_VISIBLE_COLUMN, value)}fr` : '0fr');
+    const weights = values.map((value) => value >= MIN_VISIBLE_POWER ? Math.max(MIN_VISIBLE_COLUMN, value) : 0);
+    const totalWeight = weights.reduce((total, weight) => total + weight, 0) || 1;
+    // Fractional tracks totaling less than 1fr leave part of the bar unfilled.
+    const columns = weights.map((weight) => `${100 * weight / totalWeight}fr`);
     bar.style.gridTemplateColumns = columns.join(' ');
 }
 
@@ -249,7 +252,14 @@ function renderMonthlyCost(monthlyCost) {
 
     const totalNode = document.createElement('span');
     totalNode.className = 'monthly-cost-total';
-    totalNode.textContent = `${t('monthlyCost.total')} ${total}`;
+    const monthLabel = /^\d{4}-\d{2}$/.test(monthlyCost.month || '')
+        ? new Date(`${monthlyCost.month}-01T12:00:00Z`).toLocaleDateString(document.documentElement.lang || 'sv-SE', {
+            month: 'long', timeZone: 'Europe/Stockholm'
+        })
+        : '';
+    const throughDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(monthlyCost.throughDate || '');
+    const dateLabel = throughDate ? `${Number(throughDate[3])}/${Number(throughDate[2])}:` : '';
+    totalNode.textContent = [monthLabel, dateLabel, total].filter(Boolean).join(' ');
 
     const itemsNode = document.createElement('span');
     itemsNode.className = 'monthly-cost-items';
@@ -316,6 +326,10 @@ function renderPreview() {
 function previewPrices(now) {
     const today = previewPriceHours(now, 0);
     const tomorrow = previewPriceHours(now, 1);
+    const monthParts = new Intl.DateTimeFormat('en', {
+        year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Europe/Stockholm'
+    }).formatToParts(now);
+    const month = `${monthParts.find((part) => part.type === 'year').value}-${monthParts.find((part) => part.type === 'month').value}`;
 
     return {
         current: today.find((hour) => isCurrentPricePeriod(hour, now)) || today[0],
@@ -328,6 +342,8 @@ function previewPrices(now) {
             cheap: 0.5
         },
         monthlyCost: {
+            month,
+            throughDate: `${month}-${monthParts.find((part) => part.type === 'day').value}`,
             currency: 'SEK',
             consumptionCost: 842.35,
             productionProfit: 214.7,

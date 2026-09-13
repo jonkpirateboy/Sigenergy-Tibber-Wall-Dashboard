@@ -18,6 +18,8 @@ The dashboard is intentionally simple:
 ├── const-sample.env
 ├── dashboard.jpg
 ├── README.md
+├── tests/
+│   └── monthly-cost.php
 ├── tools/
 │   ├── sigen-check.php
 │   ├── sigen-onboard.php
@@ -71,11 +73,13 @@ ELPRICE_AREA=SE4
 
 The price breakpoints are used to color the graph points.
 
-The footer can show the current month as:
+The footer shows the month's net cost, followed by consumption cost and export profit. For example, in Swedish:
 
 ```text
-Consumption - Produced = Monthly cost
+September 13/9: 627.65 SEK Consumption 842.35 SEK - Export 214.70 SEK
 ```
+
+The net cost is consumption cost minus export profit. Its label shows the localized month name, capitalized, followed by the latest included day as `d/m`, without a year or parentheses. The date comes from the latest daily row with a numeric consumption cost or production profit, in Stockholm time; empty placeholder rows do not advance it. Until Tibber reports a numeric consumption cost or production profit for the current month, it fetches and displays the previous month's available daily totals. It switches to the current month automatically when data arrives; zero counts as reported data. The two months are never combined.
 
 Tibber's public GraphQL API exposes historical consumption cost and production profit. It does not expose Grid Rewards or the app's complete monthly summary.
 
@@ -356,6 +360,18 @@ The dashboard displays:
 - `Användning`: solar, battery, grid and export
 - `Batteri`: battery percentage and runtime estimates
 - `Elpris`: current electricity price and graphs for today/tomorrow
+
+Flow bar widths are normalized so they fill the available width even below 1 kW. When solar is the only visible incoming source, it fills the entire incoming bar. The usage bar can still include blank space when displayed usage and export are lower than incoming power.
+
+## Monthly Cost Checks
+
+Run the monthly cost checks from the project root with PHP:
+
+```bash
+php tests/monthly-cost.php
+```
+
+These cover missing data, previous-month fallback across a year boundary, reported zero values, keeping monthly totals separate, and month selection in Stockholm time.
 
 ## Runtime Caches
 

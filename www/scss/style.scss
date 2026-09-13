@@ -110,6 +110,7 @@ body {
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--panel);
+    transition: grid-template-columns 450ms ease;
 }
 
 .segment {
@@ -398,6 +399,7 @@ body {
     .monthly-cost-total,
     > span:not(.monthly-cost) {
         color: var(--home);
+        text-transform: capitalize;
     }
 
     > div {

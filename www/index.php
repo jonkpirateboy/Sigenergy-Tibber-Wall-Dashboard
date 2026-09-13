@@ -545,57 +545,65 @@ function getTibberMonthlyCost(string $apiKey, int $homeIndex): ?array
 {
     try {
         $timezone = new DateTimeZone('Europe/Stockholm');
-        $monthStart = (new DateTimeImmutable('first day of this month 00:00:00', $timezone))->format(DATE_ATOM);
-        $response = apiRequest('POST', 'https://api.tibber.com/v1-beta/gql', [
-            'query' => 'query($after: String!) {
-                viewer {
-                    homes {
-                        consumption(resolution: DAILY, first: 31, after: $after) {
-                            nodes {
-                                from
-                                to
-                                consumption
-                                consumptionUnit
-                                cost
-                                currency
-                            }
-                        }
-                        production(resolution: DAILY, first: 31, after: $after) {
-                            nodes {
-                                from
-                                to
-                                production
-                                productionUnit
-                                profit
-                                currency
-                            }
-                        }
-                    }
-                }
-            }',
-            'variables' => [
-                'after' => base64_encode($monthStart),
-            ],
-        ], $apiKey);
+        $month = new DateTimeImmutable('first day of this month 00:00:00', $timezone);
+        $monthlyCost = fetchTibberMonthCost($apiKey, $homeIndex, $month, $timezone);
 
-        if (isset($response['errors'])) {
-            return null;
-        }
-
-        $home = $response['data']['viewer']['homes'][$homeIndex] ?? null;
-        if (!is_array($home)) {
-            return null;
-        }
-
-        return normalizeTibberMonthlyCost($home, $timezone);
+        return $monthlyCost ?? fetchTibberMonthCost($apiKey, $homeIndex, $month->modify('-1 month'), $timezone);
     } catch (Throwable) {
         return null;
     }
 }
 
-function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone): ?array
+function fetchTibberMonthCost(string $apiKey, int $homeIndex, DateTimeImmutable $month, DateTimeZone $timezone): ?array
 {
-    $now = new DateTimeImmutable('now', $timezone);
+    $monthStart = $month->format(DATE_ATOM);
+    $response = apiRequest('POST', 'https://api.tibber.com/v1-beta/gql', [
+        'query' => 'query($after: String!) {
+            viewer {
+                homes {
+                    consumption(resolution: DAILY, first: 31, after: $after) {
+                        nodes {
+                            from
+                            to
+                            consumption
+                            consumptionUnit
+                            cost
+                            currency
+                        }
+                    }
+                    production(resolution: DAILY, first: 31, after: $after) {
+                        nodes {
+                            from
+                            to
+                            production
+                            productionUnit
+                            profit
+                            currency
+                        }
+                    }
+                }
+            }
+        }',
+        'variables' => [
+            'after' => base64_encode($monthStart),
+        ],
+    ], $apiKey);
+
+    if (isset($response['errors'])) {
+        return null;
+    }
+
+    $home = $response['data']['viewer']['homes'][$homeIndex] ?? null;
+    if (!is_array($home)) {
+        return null;
+    }
+
+    return normalizeTibberMonthlyCost($home, $timezone, $month);
+}
+
+function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone, ?DateTimeImmutable $month = null): ?array
+{
+    $now = ($month ?? new DateTimeImmutable('now', $timezone))->setTimezone($timezone);
     $consumptionNodes = currentMonthNodes($home['consumption']['nodes'] ?? [], $now, $timezone);
     $productionNodes = currentMonthNodes($home['production']['nodes'] ?? [], $now, $timezone);
 
@@ -604,8 +612,25 @@ function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone): ?array
     }
 
     $consumptionCost = sumMoneyNumbers($consumptionNodes, 'cost', null);
-    $productionProfit = sumMoneyNumbers($productionNodes, 'profit', 0.0);
+    $productionProfit = sumMoneyNumbers($productionNodes, 'profit', null);
+    // Empty placeholder rows are not data; a reported zero is.
+    if ($consumptionCost === null && $productionProfit === null) {
+        return null;
+    }
+    $productionProfit ??= 0.0;
+    // Daily rows identify the covered day by 'from'; 'to' is the next day's boundary.
+    $throughDate = null;
+    foreach (['cost' => $consumptionNodes, 'profit' => $productionNodes] as $key => $nodes) {
+        foreach ($nodes as $node) {
+            if (is_numeric($node[$key] ?? null)) {
+                $day = (new DateTimeImmutable((string)$node['from']))->setTimezone($timezone)->format('Y-m-d');
+                $throughDate = $throughDate === null ? $day : max($throughDate, $day);
+            }
+        }
+    }
     return normalizeMonthlyCostTotals([
+        'month' => $now->format('Y-m'),
+        'throughDate' => $throughDate,
         'from' => monthNodeBoundary($consumptionNodes, $productionNodes, 'from'),
         'to' => monthNodeBoundary($consumptionNodes, $productionNodes, 'to'),
         'currency' => monthNodeCurrency($consumptionNodes, $productionNodes),
