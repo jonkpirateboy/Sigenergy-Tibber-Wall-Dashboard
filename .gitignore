@@ -2,4 +2,5 @@ const.env
 .DS_Store
 *.map
 *.pdf
+commit.sh
 var/
