@@ -49,6 +49,10 @@ Set `SIGEN_AUTH_TYPE=password` to authenticate with Sigenergy account credential
 
 Set `SIGEN_AUTH_TYPE=key` to use `SIGEN_APP_KEY` and `SIGEN_APP_SECRET` instead.
 
+For key authentication, sign in to the [Sigenergy Developer Portal](https://developer.sigencloud.com/) and find the **App Key** and **App Secret** for your registered application. Save them in the project root's local `const.env` file as `SIGEN_APP_KEY` and `SIGEN_APP_SECRET`.
+
+These keys are not needed when using `SIGEN_AUTH_TYPE=password`; that mode uses `SIGEN_USERNAME` and `SIGEN_PASSWORD` instead.
+
 ### Battery Settings
 
 `SIGEN_BATTERY_CAPACITY_KWH` is used for runtime estimates.
