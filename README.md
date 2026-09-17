@@ -83,7 +83,7 @@ The footer shows the month's net cost, followed by consumption cost and export p
 September 13/9: 627.65 SEK Consumption 842.35 SEK - Export 214.70 SEK
 ```
 
-The net cost is consumption cost minus export profit. Its label shows the localized month name, capitalized, followed by the latest included day as `d/m`, without a year or parentheses. The date comes from the latest daily row with a numeric consumption cost or production profit, in Stockholm time; empty placeholder rows do not advance it. Until Tibber reports a numeric consumption cost or production profit for the current month, it fetches and displays the previous month's available daily totals. It switches to the current month automatically when data arrives; zero counts as reported data. The two months are never combined.
+The net cost is consumption cost minus export profit. Its label shows the localized month name, capitalized, followed by the latest included interval's end as `d/m HH:mm` in Stockholm time, without a year or parentheses. Monthly totals use hourly cost and profit data; empty placeholder rows do not advance the cutoff, but reported zero values do. Midnight is shown as `00:00` on the following date. Consumption and production can arrive at different times: the label uses the latest of their cutoffs, and hovering over the calculation shows each cutoff separately. Older cached data without a cutoff continues to show only the date. Until Tibber reports a numeric cost or profit for the current month, the previous month's hourly totals are displayed. The two months are never combined. Hourly requests respect Tibber's 744-row limit, including the extra hour when daylight saving time ends.
 
 Tibber's public GraphQL API exposes historical consumption cost and production profit. It does not expose Grid Rewards or the app's complete monthly summary.
 
@@ -373,9 +373,10 @@ Run the monthly cost checks from the project root with PHP:
 
 ```bash
 php tests/monthly-cost.php
+node tests/monthly-cost-label.js
 ```
 
-These cover missing data, previous-month fallback across a year boundary, reported zero values, keeping monthly totals separate, and month selection in Stockholm time.
+These cover missing data, previous-month fallback across a year boundary, reported zero values, keeping monthly totals separate, month selection in Stockholm time, hourly cutoffs, midnight, and daylight saving time.
 
 ## Runtime Caches
 

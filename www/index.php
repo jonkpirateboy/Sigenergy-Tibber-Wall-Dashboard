@@ -556,49 +556,89 @@ function getTibberMonthlyCost(string $apiKey, int $homeIndex): ?array
 
 function fetchTibberMonthCost(string $apiKey, int $homeIndex, DateTimeImmutable $month, DateTimeZone $timezone): ?array
 {
-    $monthStart = $month->format(DATE_ATOM);
-    $response = apiRequest('POST', 'https://api.tibber.com/v1-beta/gql', [
-        'query' => 'query($after: String!) {
-            viewer {
-                homes {
-                    consumption(resolution: DAILY, first: 31, after: $after) {
-                        nodes {
-                            from
-                            to
-                            consumption
-                            consumptionUnit
-                            cost
-                            currency
+    $home = ['consumption' => ['nodes' => []], 'production' => ['nodes' => []]];
+    foreach (tibberMonthHourWindows($month, $timezone) as $window) {
+        $response = apiRequest('POST', 'https://api.tibber.com/v1-beta/gql', [
+            'query' => 'query($after: String!, $first: Int!) {
+                viewer {
+                    homes {
+                        consumption(resolution: HOURLY, first: $first, after: $after) {
+                            nodes {
+                                from
+                                to
+                                consumption
+                                consumptionUnit
+                                cost
+                                currency
+                            }
                         }
-                    }
-                    production(resolution: DAILY, first: 31, after: $after) {
-                        nodes {
-                            from
-                            to
-                            production
-                            productionUnit
-                            profit
-                            currency
+                        production(resolution: HOURLY, first: $first, after: $after) {
+                            nodes {
+                                from
+                                to
+                                production
+                                productionUnit
+                                profit
+                                currency
+                            }
                         }
                     }
                 }
-            }
-        }',
-        'variables' => [
-            'after' => base64_encode($monthStart),
-        ],
-    ], $apiKey);
+            }',
+            'variables' => [
+                'after' => base64_encode($window['from']),
+                'first' => $window['hours'],
+            ],
+        ], $apiKey);
 
-    if (isset($response['errors'])) {
-        return null;
-    }
-
-    $home = $response['data']['viewer']['homes'][$homeIndex] ?? null;
-    if (!is_array($home)) {
-        return null;
+        if (isset($response['errors'])) {
+            return null;
+        }
+        $page = $response['data']['viewer']['homes'][$homeIndex] ?? null;
+        if (!is_array($page)) {
+            return null;
+        }
+        foreach (['consumption', 'production'] as $kind) {
+            $home[$kind]['nodes'] = array_merge($home[$kind]['nodes'], $page[$kind]['nodes'] ?? []);
+        }
     }
 
     return normalizeTibberMonthlyCost($home, $timezone, $month);
+}
+
+function tibberMonthHourWindows(DateTimeImmutable $month, DateTimeZone $timezone): array
+{
+    $start = $month->setTimezone($timezone)->modify('first day of this month')->setTime(0, 0);
+    $end = $start->modify('+1 month');
+    $windows = [];
+    // Tibber allows 744 hourly rows per request; October can contain 745 hours.
+    for ($timestamp = $start->getTimestamp(); $timestamp < $end->getTimestamp(); $timestamp += 744 * 3600) {
+        $windows[] = [
+            'from' => $start->setTimestamp($timestamp)->format(DATE_ATOM),
+            'hours' => min(744, (int)(($end->getTimestamp() - $timestamp) / 3600)),
+        ];
+    }
+    return $windows;
+}
+
+function reportedMoneyThrough(array $nodes, string $moneyKey, DateTimeZone $timezone): ?DateTimeImmutable
+{
+    $latest = null;
+    foreach ($nodes as $node) {
+        if (!is_numeric($node[$moneyKey] ?? null) || !is_string($node['to'] ?? null) || trim($node['to']) === '') {
+            continue;
+        }
+        try {
+            $from = new DateTimeImmutable((string)$node['from']);
+            $to = (new DateTimeImmutable($node['to']))->setTimezone($timezone);
+        } catch (Throwable) {
+            continue;
+        }
+        if ($to > $from && ($latest === null || $to > $latest)) {
+            $latest = $to;
+        }
+    }
+    return $latest;
 }
 
 function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone, ?DateTimeImmutable $month = null): ?array
@@ -618,7 +658,7 @@ function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone, ?DateTi
         return null;
     }
     $productionProfit ??= 0.0;
-    // Daily rows identify the covered day by 'from'; 'to' is the next day's boundary.
+    // Keep the covered date for older clients; the exact cutoff uses the interval end.
     $throughDate = null;
     foreach (['cost' => $consumptionNodes, 'profit' => $productionNodes] as $key => $nodes) {
         foreach ($nodes as $node) {
@@ -628,9 +668,18 @@ function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone, ?DateTi
             }
         }
     }
+    $consumptionThrough = reportedMoneyThrough($consumptionNodes, 'cost', $timezone);
+    $productionThrough = reportedMoneyThrough($productionNodes, 'profit', $timezone);
+    $through = $consumptionThrough;
+    if ($productionThrough !== null && ($through === null || $productionThrough > $through)) {
+        $through = $productionThrough;
+    }
     return normalizeMonthlyCostTotals([
         'month' => $now->format('Y-m'),
         'throughDate' => $throughDate,
+        'throughAt' => $through?->format(DATE_ATOM),
+        'consumptionThroughAt' => $consumptionThrough?->format(DATE_ATOM),
+        'productionThroughAt' => $productionThrough?->format(DATE_ATOM),
         'from' => monthNodeBoundary($consumptionNodes, $productionNodes, 'from'),
         'to' => monthNodeBoundary($consumptionNodes, $productionNodes, 'to'),
         'currency' => monthNodeCurrency($consumptionNodes, $productionNodes),

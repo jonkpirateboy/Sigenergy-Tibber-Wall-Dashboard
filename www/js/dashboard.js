@@ -237,6 +237,18 @@ function renderPrices(data) {
     renderMonthlyCost(data.monthlyCost);
 }
 
+function monthlyCostCutoff(value) {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return '';
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return '';
+    const parts = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'Europe/Stockholm', day: 'numeric', month: 'numeric',
+        hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    }).formatToParts(date);
+    const part = (type) => parts.find((item) => item.type === type).value;
+    return `${part('day')}/${part('month')} ${part('hour')}:${part('minute')}`;
+}
+
 function renderMonthlyCost(monthlyCost) {
     if (!monthlyCost) {
         els.monthlyCost.textContent = t('monthlyCost.noData');
@@ -258,12 +270,20 @@ function renderMonthlyCost(monthlyCost) {
         })
         : '';
     const throughDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(monthlyCost.throughDate || '');
-    const dateLabel = throughDate ? `${Number(throughDate[3])}/${Number(throughDate[2])}:` : '';
+    const cutoff = monthlyCostCutoff(monthlyCost.throughAt);
+    const dateLabel = cutoff ? `${cutoff}:` : (throughDate ? `${Number(throughDate[3])}/${Number(throughDate[2])}:` : '');
     totalNode.textContent = [monthLabel, dateLabel, total].filter(Boolean).join(' ');
 
     const itemsNode = document.createElement('span');
     itemsNode.className = 'monthly-cost-items';
     itemsNode.textContent = `${t('monthlyCost.consumption')} ${consumption} - ${t('monthlyCost.production')} ${production}`;
+    itemsNode.title = [
+        [t('monthlyCost.consumption'), monthlyCost.consumptionThroughAt],
+        [t('monthlyCost.production'), monthlyCost.productionThroughAt]
+    ].map(([label, value]) => {
+        const end = monthlyCostCutoff(value);
+        return end ? `${label}: ${end}` : '';
+    }).filter(Boolean).join(' · ');
 
     els.monthlyCost.append(totalNode, ' ', itemsNode);
 }
@@ -344,6 +364,7 @@ function previewPrices(now) {
         monthlyCost: {
             month,
             throughDate: `${month}-${monthParts.find((part) => part.type === 'day').value}`,
+            throughAt: new Date(Math.floor(now.getTime() / 3600000) * 3600000).toISOString(),
             currency: 'SEK',
             consumptionCost: 842.35,
             productionProfit: 214.7,

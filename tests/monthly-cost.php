@@ -58,4 +58,36 @@ check(normalizeTibberMonthlyCost($datedHome, $timezone, $month)['throughDate'] =
 $datedHome['production']['nodes'][1]['profit'] = 0;
 check(normalizeTibberMonthlyCost($datedHome, $timezone, $month)['throughDate'] === '2027-01-13', 'Latest reported production must advance the covered date');
 check(normalizeTibberMonthlyCost([], $timezone, $previous) === null, 'No prior data must remain empty');
+$hourly = [
+    'consumption' => ['nodes' => [
+        ['from' => '2027-01-12T10:00:00+01:00', 'to' => '2027-01-12T11:00:00+01:00', 'cost' => 2.25],
+        ['from' => '2027-01-12T11:00:00+01:00', 'to' => '2027-01-12T12:00:00+01:00', 'cost' => 0],
+        ['from' => '2027-01-12T12:00:00+01:00', 'to' => '2027-01-12T13:00:00+01:00', 'cost' => null],
+    ]],
+    'production' => ['nodes' => [
+        ['from' => '2027-01-12T10:00:00+01:00', 'to' => '2027-01-12T11:00:00+01:00', 'profit' => 3.75],
+    ]],
+];
+$timed = normalizeTibberMonthlyCost($hourly, $timezone, $month);
+check($timed['monthCost'] === -1.5, 'Sum reported hourly amounts');
+check($timed['throughAt'] === '2027-01-12T12:00:00+01:00', 'Use last reported interval end, including zero, ignoring placeholders');
+check($timed['consumptionThroughAt'] === '2027-01-12T12:00:00+01:00', 'Keep consumption cutoff');
+check($timed['productionThroughAt'] === '2027-01-12T11:00:00+01:00', 'Keep earlier production cutoff');
+$hourly['production']['nodes'][] = ['from' => '2027-01-12T12:00:00+01:00', 'to' => '2027-01-12T13:00:00+01:00', 'profit' => 0];
+check(normalizeTibberMonthlyCost($hourly, $timezone, $month)['throughAt'] === '2027-01-12T13:00:00+01:00', 'Production can advance the cutoff');
+check($fallback['throughAt'] === '2027-01-01T00:00:00+01:00', 'Month-end cutoff is midnight in the following month');
+check(reportedMoneyThrough([
+    ['from' => '2027-01-01T00:00:00Z', 'to' => 'bad date', 'cost' => 1],
+    ['from' => '2027-01-01T00:00:00Z', 'to' => '', 'cost' => 1],
+], 'cost', $timezone) === null, 'Do not invent a cutoff for invalid end times');
+$dstEnd = reportedMoneyThrough([
+    ['from' => '2026-10-25T02:00:00+01:00', 'to' => '2026-10-25T03:00:00+01:00', 'cost' => 1],
+    ['from' => '2026-10-25T02:00:00+02:00', 'to' => '2026-10-25T02:00:00+01:00', 'cost' => 1],
+], 'cost', $timezone);
+check($dstEnd->format(DATE_ATOM) === '2026-10-25T03:00:00+01:00', 'Compare actual instants across DST');
+$october = tibberMonthHourWindows(new DateTimeImmutable('2026-10-01', $timezone), $timezone);
+check(array_column($october, 'hours') === [744, 1], 'Include all 745 October hours within the API page limit');
+check($october[1]['from'] === '2026-10-31T23:00:00+01:00', 'Second window includes the final hour without overlap');
+$march = tibberMonthHourWindows(new DateTimeImmutable('2026-03-01', $timezone), $timezone);
+check(array_column($march, 'hours') === [743], 'Account for the missing spring DST hour');
 echo "Monthly cost checks passed\n";
