@@ -90,4 +90,66 @@ check(array_column($october, 'hours') === [744, 1], 'Include all 745 October hou
 check($october[1]['from'] === '2026-10-31T23:00:00+01:00', 'Second window includes the final hour without overlap');
 $march = tibberMonthHourWindows(new DateTimeImmutable('2026-03-01', $timezone), $timezone);
 check(array_column($march, 'hours') === [743], 'Account for the missing spring DST hour');
+
+// Actual August API totals: the page includes 49 SEK, the energy nodes do not.
+$august = new DateTimeImmutable('2026-08-01', $timezone);
+$billed = homeWithCosts(675.093620684375, 130.504091605, '2026-08-01T00:00:00+02:00');
+$billed['monthlyConsumption'] = [
+    'pageInfo' => ['totalCost' => 724.093620684375],
+    'nodes' => [['from' => '2026-08-01T00:00:00+02:00', 'cost' => 675.093620684375]],
+];
+$withFee = normalizeTibberMonthlyCost($billed, $timezone, $august);
+check($withFee['monthlyFee'] === 49.0, 'Derive the subscription fee from the API, including VAT');
+check($withFee['consumptionCost'] === 675.09 && $withFee['productionProfit'] === 130.5, 'Keep the visible energy amounts separate from the fee');
+check($withFee['monthCost'] === 593.59, 'Include the fee in the net total');
+check(normalizeMonthlyCostTotals($withFee)['monthCost'] === 593.59, 'Normalizing cached totals must not add the fee twice');
+check(tibberMonthlyFee($billed['monthlyConsumption'], $month, $timezone) === null, 'Do not apply a page total from another month');
+check(tibberMonthlyFee([], $august, $timezone) === null, 'Missing fee metadata must remain unknown');
+$billed['monthlyConsumption']['pageInfo']['totalCost'] = 675.093620684375;
+check(tibberMonthlyFee($billed['monthlyConsumption'], $august, $timezone) === 0.0, 'Keep a reported zero fee');
+$billed['monthlyConsumption']['pageInfo']['totalCost'] = 49;
+$billed['monthlyConsumption']['nodes'][0]['cost'] = null;
+check(tibberMonthlyFee($billed['monthlyConsumption'], $august, $timezone) === null, 'Do not infer fees from empty cost placeholders');
+
+$rounding = [
+    'pageInfo' => ['totalCost' => 49.005],
+    'nodes' => [['from' => '2026-08-01T00:00:00+02:00', 'cost' => 0.004]],
+];
+check(tibberMonthlyFee($rounding, $august, $timezone) === 49.0, 'Subtract unrounded API values before rounding the fee');
+$octoberHome = homeWithCosts(12, 3, '2026-10-01T00:00:00+02:00');
+$octoberHome['consumption']['nodes'][] = ['from' => '2026-10-31T23:00:00+01:00', 'to' => '2026-11-01T00:00:00+01:00', 'cost' => 2];
+$octoberHome['monthlyConsumption'] = [
+    'pageInfo' => ['totalCost' => 63],
+    'nodes' => [['from' => '2026-10-01T00:00:00+02:00', 'cost' => 12], ['from' => '2026-10-31T00:00:00+01:00', 'cost' => 2]],
+];
+check(normalizeTibberMonthlyCost($octoberHome, $timezone, new DateTimeImmutable('2026-10-01', $timezone))['monthCost'] === 60.0, 'Add the full-month fee once across October hourly windows');
+
+$september = new DateTimeImmutable('2026-09-01', $timezone);
+$pendingFee = homeWithCosts(100, 20, '2026-09-20T00:00:00+02:00');
+$pendingFee['monthlyConsumption'] = [
+    'pageInfo' => ['totalCost' => 100],
+    'nodes' => [['from' => '2026-09-20T00:00:00+02:00', 'cost' => 100]],
+];
+$pendingFee['previousMonthlyConsumption'] = [
+    'pageInfo' => ['totalCost' => 724.093620684375],
+    'nodes' => [['from' => '2026-08-01T00:00:00+02:00', 'cost' => 675.093620684375]],
+];
+$estimated = normalizeTibberMonthlyCost($pendingFee, $timezone, $september, true);
+check($estimated['monthlyFee'] === 49.0 && $estimated['monthCost'] === 129.0, 'Use the previous API fee while the live month has none');
+check($estimated['monthlyFeeEstimated'] && $estimated['monthlyFeeSourceMonth'] === '2026-08', 'Keep the fee estimate and source month explicit');
+check($estimated['consumptionCost'] === 100.0 && $estimated['throughDate'] === '2026-09-20', 'Previous fee metadata must not add previous energy or change the cutoff');
+check(normalizeTibberMonthlyCost($pendingFee, $timezone, $september)['monthCost'] === 80.0, 'Historical months must retain their reported zero fee');
+$pendingFee['monthlyConsumption']['pageInfo']['totalCost'] = 159;
+$reported = normalizeTibberMonthlyCost($pendingFee, $timezone, $september, true);
+check($reported['monthlyFee'] === 59.0 && $reported['monthCost'] === 139.0, 'Replace the estimate when the current API fee arrives');
+check(!$reported['monthlyFeeEstimated'] && $reported['monthlyFeeSourceMonth'] === '2026-09', 'Mark the current fee as reported');
+$octoberPending = array_replace($estimated, ['month' => '2026-10', 'monthlyFee' => 0.0, 'monthlyFeeSourceMonth' => '2026-10', 'monthlyFeeEstimated' => false, 'monthCost' => 80.0]);
+$carried = withCachedTibberMonthlyFee($octoberPending, $estimated);
+check($carried['monthlyFee'] === 49.0 && $carried['monthlyFeeSourceMonth'] === '2026-08' && $carried['monthCost'] === 129.0, 'Keep the last known fee across a month boundary until the next fee is reported');
+check(withCachedTibberMonthlyFee($reported, $estimated) === $reported, 'A new reported fee takes priority over the cached estimate');
+check(withCachedTibberMonthlyFee($octoberPending, null) === $octoberPending, 'No cached fee must not invent an amount');
+check(withCachedTibberMonthlyFee($octoberPending, array_replace($estimated, ['currency' => 'EUR'])) === $octoberPending, 'Do not carry a fee in a different currency');
+check(withCachedTibberMonthlyFee($octoberPending, array_replace($estimated, ['monthlyFeeSourceMonth' => '2026-11'])) === $octoberPending, 'Do not carry a future fee into an earlier month');
+$empty['previousMonthlyConsumption'] = $pendingFee['previousMonthlyConsumption'];
+check(normalizeTibberMonthlyCost($empty, $timezone, $month, true) === null, 'A previous fee must not turn an empty month into current energy data');
 echo "Monthly cost checks passed\n";

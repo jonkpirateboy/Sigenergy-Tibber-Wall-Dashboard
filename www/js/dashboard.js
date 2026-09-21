@@ -277,6 +277,9 @@ function renderMonthlyCost(monthlyCost) {
     const itemsNode = document.createElement('span');
     itemsNode.className = 'monthly-cost-items';
     itemsNode.textContent = `${t('monthlyCost.consumption')} ${consumption} - ${t('monthlyCost.production')} ${production}`;
+    if (Number.isFinite(monthlyCost.monthlyFee)) {
+        itemsNode.textContent += ` + ${t('monthlyCost.fee')} ${money(monthlyCost.monthlyFee, currency)}`;
+    }
     itemsNode.title = [
         [t('monthlyCost.consumption'), monthlyCost.consumptionThroughAt],
         [t('monthlyCost.production'), monthlyCost.productionThroughAt]
@@ -368,7 +371,8 @@ function previewPrices(now) {
             currency: 'SEK',
             consumptionCost: 842.35,
             productionProfit: 214.7,
-            monthCost: 627.65
+            monthlyFee: 49,
+            monthCost: 676.65
         }
     };
 }

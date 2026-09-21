@@ -19,6 +19,7 @@
   "incoming.solar": "Solar",
   "incoming.title": "Incoming",
   "monthlyCost.consumption": "Consumption",
+  "monthlyCost.fee": "Monthly fee",
   "monthlyCost.loading": "Monthly cost loading",
   "monthlyCost.noData": "Monthly cost: --",
   "monthlyCost.production": "Export",

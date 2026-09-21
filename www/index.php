@@ -546,22 +546,55 @@ function getTibberMonthlyCost(string $apiKey, int $homeIndex): ?array
     try {
         $timezone = new DateTimeZone('Europe/Stockholm');
         $month = new DateTimeImmutable('first day of this month 00:00:00', $timezone);
-        $monthlyCost = fetchTibberMonthCost($apiKey, $homeIndex, $month, $timezone);
+        $monthlyCost = fetchTibberMonthCost($apiKey, $homeIndex, $month, $timezone, true);
+        if ($monthlyCost !== null) {
+            return withCachedTibberMonthlyFee($monthlyCost, readElectricityPriceCache()['monthlyCost'] ?? null);
+        }
 
-        return $monthlyCost ?? fetchTibberMonthCost($apiKey, $homeIndex, $month->modify('-1 month'), $timezone);
+        return fetchTibberMonthCost($apiKey, $homeIndex, $month->modify('-1 month'), $timezone);
     } catch (Throwable) {
         return null;
     }
 }
 
-function fetchTibberMonthCost(string $apiKey, int $homeIndex, DateTimeImmutable $month, DateTimeZone $timezone): ?array
+function withCachedTibberMonthlyFee(array $monthlyCost, ?array $cached): array
+{
+    $fee = $monthlyCost['monthlyFee'] ?? null;
+    $cachedFee = $cached['monthlyFee'] ?? null;
+    $sourceMonth = $cached['monthlyFeeSourceMonth'] ?? '';
+    if (($fee !== null && $fee != 0.0)
+        || !is_numeric($cachedFee) || (float)$cachedFee <= 0.0
+        || ($cached['dataSource'] ?? null) !== 'tibber-api'
+        || ($cached['currency'] ?? null) !== ($monthlyCost['currency'] ?? null)
+        || !is_string($sourceMonth) || !preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $sourceMonth)
+        || $sourceMonth >= $monthlyCost['month']) {
+        return $monthlyCost;
+    }
+
+    // Preserve the last known fee if the previous month has not been billed yet.
+    $monthlyCost['monthlyFee'] = (float)$cachedFee;
+    $monthlyCost['monthlyFeeSourceMonth'] = $sourceMonth;
+    $monthlyCost['monthlyFeeEstimated'] = true;
+    return normalizeMonthlyCostTotals($monthlyCost);
+}
+
+function fetchTibberMonthCost(string $apiKey, int $homeIndex, DateTimeImmutable $month, DateTimeZone $timezone, bool $usePreviousFee = false): ?array
 {
     $home = ['consumption' => ['nodes' => []], 'production' => ['nodes' => []]];
-    foreach (tibberMonthHourWindows($month, $timezone) as $window) {
+    $previousMonth = $month->setTimezone($timezone)->modify('first day of this month')->setTime(0, 0)->modify('-1 month');
+    foreach (tibberMonthHourWindows($month, $timezone) as $index => $window) {
         $response = apiRequest('POST', 'https://api.tibber.com/v1-beta/gql', [
-            'query' => 'query($after: String!, $first: Int!) {
+            'query' => 'query($after: String!, $first: Int!, $days: Int!, $includeMonthlyFee: Boolean!, $previousAfter: String!, $previousDays: Int!, $includePreviousFee: Boolean!) {
                 viewer {
                     homes {
+                        monthlyConsumption: consumption(resolution: DAILY, first: $days, after: $after) @include(if: $includeMonthlyFee) {
+                            pageInfo { totalCost }
+                            nodes { from cost }
+                        }
+                        previousMonthlyConsumption: consumption(resolution: DAILY, first: $previousDays, after: $previousAfter) @include(if: $includePreviousFee) {
+                            pageInfo { totalCost }
+                            nodes { from cost }
+                        }
                         consumption(resolution: HOURLY, first: $first, after: $after) {
                             nodes {
                                 from
@@ -588,6 +621,11 @@ function fetchTibberMonthCost(string $apiKey, int $homeIndex, DateTimeImmutable 
             'variables' => [
                 'after' => base64_encode($window['from']),
                 'first' => $window['hours'],
+                'days' => (int)$month->setTimezone($timezone)->format('t'),
+                'includeMonthlyFee' => $index === 0,
+                'previousAfter' => base64_encode($previousMonth->format(DATE_ATOM)),
+                'previousDays' => (int)$previousMonth->format('t'),
+                'includePreviousFee' => $usePreviousFee && $index === 0,
             ],
         ], $apiKey);
 
@@ -598,12 +636,16 @@ function fetchTibberMonthCost(string $apiKey, int $homeIndex, DateTimeImmutable 
         if (!is_array($page)) {
             return null;
         }
+        if ($index === 0) {
+            $home['monthlyConsumption'] = $page['monthlyConsumption'] ?? [];
+            $home['previousMonthlyConsumption'] = $page['previousMonthlyConsumption'] ?? [];
+        }
         foreach (['consumption', 'production'] as $kind) {
             $home[$kind]['nodes'] = array_merge($home[$kind]['nodes'], $page[$kind]['nodes'] ?? []);
         }
     }
 
-    return normalizeTibberMonthlyCost($home, $timezone, $month);
+    return normalizeTibberMonthlyCost($home, $timezone, $month, $usePreviousFee);
 }
 
 function tibberMonthHourWindows(DateTimeImmutable $month, DateTimeZone $timezone): array
@@ -641,7 +683,7 @@ function reportedMoneyThrough(array $nodes, string $moneyKey, DateTimeZone $time
     return $latest;
 }
 
-function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone, ?DateTimeImmutable $month = null): ?array
+function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone, ?DateTimeImmutable $month = null, bool $usePreviousFee = false): ?array
 {
     $now = ($month ?? new DateTimeImmutable('now', $timezone))->setTimezone($timezone);
     $consumptionNodes = currentMonthNodes($home['consumption']['nodes'] ?? [], $now, $timezone);
@@ -674,6 +716,20 @@ function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone, ?DateTi
     if ($productionThrough !== null && ($through === null || $productionThrough > $through)) {
         $through = $productionThrough;
     }
+    $monthlyFee = tibberMonthlyFee($home['monthlyConsumption'] ?? [], $now, $timezone);
+    $feeSourceMonth = $monthlyFee === null ? null : $now->format('Y-m');
+    $feeEstimated = false;
+    // Current-month API totals may not include the subscription fee yet.
+    // Only carry the previous fee forward when explicitly requested for the live month.
+    if ($usePreviousFee && ($monthlyFee === null || $monthlyFee === 0.0)) {
+        $previousMonth = $now->modify('first day of this month')->modify('-1 month');
+        $previousFee = tibberMonthlyFee($home['previousMonthlyConsumption'] ?? [], $previousMonth, $timezone);
+        if ($previousFee !== null && $previousFee > 0.0) {
+            $monthlyFee = $previousFee;
+            $feeSourceMonth = $previousMonth->format('Y-m');
+            $feeEstimated = true;
+        }
+    }
     return normalizeMonthlyCostTotals([
         'month' => $now->format('Y-m'),
         'throughDate' => $throughDate,
@@ -684,12 +740,36 @@ function normalizeTibberMonthlyCost(array $home, DateTimeZone $timezone, ?DateTi
         'to' => monthNodeBoundary($consumptionNodes, $productionNodes, 'to'),
         'currency' => monthNodeCurrency($consumptionNodes, $productionNodes),
         'consumptionCost' => $consumptionCost,
+        'monthlyFee' => $monthlyFee,
+        'monthlyFeeSourceMonth' => $feeSourceMonth,
+        'monthlyFeeEstimated' => $feeEstimated,
         'consumptionKwh' => sumMoneyNumbers($consumptionNodes, 'consumption', null),
         'productionProfit' => $productionProfit,
         'productionKwh' => sumMoneyNumbers($productionNodes, 'production', 0.0),
         'monthCost' => null,
         'dataSource' => 'tibber-api',
     ]);
+}
+
+function tibberMonthlyFee(array $connection, DateTimeImmutable $month, DateTimeZone $timezone): ?float
+{
+    $total = $connection['pageInfo']['totalCost'] ?? null;
+    $nodes = $connection['nodes'] ?? [];
+    $monthNodes = currentMonthNodes($nodes, $month, $timezone);
+    if (!is_numeric($total) || $monthNodes === [] || count($monthNodes) !== count($nodes)) {
+        return null;
+    }
+
+    $costs = array_column($monthNodes, 'cost');
+    $costs = array_filter($costs, 'is_numeric');
+    if ($costs === []) {
+        return null;
+    }
+
+    // Page totals include the subscription fee; node costs exclude it.
+    // Use one full-month daily page, independent of hourly pagination and DST.
+    // Subtract before rounding so the fee cannot pick up an extra rounding cent.
+    return round((float)$total - array_sum($costs), 2);
 }
 
 function currentMonthNodes(mixed $nodes, DateTimeImmutable $now, DateTimeZone $timezone): array
@@ -734,7 +814,8 @@ function normalizeMonthlyCostTotals(?array $monthlyCost): ?array
 
     $monthlyCost['monthCost'] = is_numeric($monthlyCost['consumptionCost'] ?? null)
         && is_numeric($monthlyCost['productionProfit'] ?? null)
-        ? round((float)$monthlyCost['consumptionCost'] - (float)$monthlyCost['productionProfit'], 2)
+        ? round((float)$monthlyCost['consumptionCost'] - (float)$monthlyCost['productionProfit']
+            + (is_numeric($monthlyCost['monthlyFee'] ?? null) ? (float)$monthlyCost['monthlyFee'] : 0.0), 2)
         : null;
     unset($monthlyCost['gridRewards']);
 

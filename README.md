@@ -77,15 +77,19 @@ ELPRICE_AREA=SE4
 
 The price breakpoints are used to color the graph points.
 
-The footer shows the month's net cost, followed by consumption cost and export profit. For example, in Swedish:
+The footer shows the month's net cost, followed by consumption cost, export profit and the subscription fee. For example, in Swedish:
 
 ```text
-September 13/9: 627.65 SEK Consumption 842.35 SEK - Export 214.70 SEK
+September 13/9: 676,65 SEK Förbrukning 842,35 SEK - Export 214,70 SEK + Månadsavg. 49,00 SEK
 ```
 
-The net cost is consumption cost minus export profit. Its label shows the localized month name, capitalized, followed by the latest included interval's end as `d/m HH:mm` in Stockholm time, without a year or parentheses. Monthly totals use hourly cost and profit data; empty placeholder rows do not advance the cutoff, but reported zero values do. Midnight is shown as `00:00` on the following date. Consumption and production can arrive at different times: the label uses the latest of their cutoffs, and hovering over the calculation shows each cutoff separately. Older cached data without a cutoff continues to show only the date. Until Tibber reports a numeric cost or profit for the current month, the previous month's hourly totals are displayed. The two months are never combined. Hourly requests respect Tibber's 744-row limit, including the extra hour when daylight saving time ends.
+The net cost is consumption cost plus the subscription fee minus export profit. The fee is included in `.monthly-cost-total` and shown as an addition in `.monthly-cost-items` whenever an amount is available. The fee comes from the difference between `consumption.pageInfo.totalCost` and the sum of its node costs, using one full-month DAILY page so hourly pagination and daylight saving time cannot duplicate or omit fees. No fee amount is hardcoded. While the current month reports a zero or missing fee, the previous month's positive API fee is used as an estimate. If that month also lacks a fee, the last known fee in the local price cache is retained. A newly reported fee replaces the estimate. The JSON records `monthlyFee`, `monthlyFeeSourceMonth` and `monthlyFeeEstimated`; historical months keep their own reported fee, including zero. Older cached data without fee metadata retains its previous total until refreshed.
+
+The label shows the localized month name, capitalized, followed by the latest included interval's end as `d/m HH:mm` in Stockholm time, without a year or parentheses. Monthly energy totals use hourly cost and profit data; empty placeholder rows do not advance the cutoff, but reported zero values do. Midnight is shown as `00:00` on the following date. Consumption and production can arrive at different times: the label uses the latest of their cutoffs, and hovering over the calculation shows each cutoff separately. Older cached data without a cutoff continues to show only the date. Until Tibber reports a numeric cost or profit for the current month, the previous month's hourly totals are displayed. Energy totals from different months are never combined. Hourly requests respect Tibber's 744-row limit, including the extra hour when daylight saving time ends.
 
 Tibber's public GraphQL API exposes historical consumption cost and production profit. It does not expose Grid Rewards or the app's complete monthly summary.
+
+These totals can differ from a quarter-hourly invoice. In a reconciliation of August 2026, all hourly API costs equalled hourly consumption times the hourly unit price, and those prices matched the unweighted mean of the four quarter-hourly prices (within published price rounding). Hourly production profit followed the same pattern. Consumption surcharges including VAT matched the invoice; the difference was in the spot-price weighting. Tibber's invoice uses consumption per quarter, but the public GraphQL `EnergyResolution` enum exposes no quarter-hourly consumption or production data. Fetching quarter-hourly prices alone therefore cannot reproduce the invoice. See [Tibber's billing explanation](https://support.tibber.com/sv/articles/4406375-sa-beraknar-vi-din-elfaktura) and [API reference](https://developer.tibber.com/api/reference.md).
 
 ### Wiz Price Light
 
@@ -376,7 +380,7 @@ php tests/monthly-cost.php
 node tests/monthly-cost-label.js
 ```
 
-These cover missing data, previous-month fallback across a year boundary, reported zero values, keeping monthly totals separate, month selection in Stockholm time, hourly cutoffs, midnight, and daylight saving time.
+These cover missing data, previous-month fallback across a year boundary, reported zero values, keeping monthly totals separate, month selection in Stockholm time, hourly cutoffs, midnight, daylight saving time, API subscription fees, fee estimates and replacement, rounding, and showing the fee in the visible consumption/export calculation.
 
 ## Runtime Caches
 

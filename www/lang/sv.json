@@ -19,6 +19,7 @@
   "incoming.solar": "Sol",
   "incoming.title": "Inkommande",
   "monthlyCost.consumption": "Förbrukning",
+  "monthlyCost.fee": "Månadsavg.",
   "monthlyCost.loading": "Månadskostnad hämtas",
   "monthlyCost.noData": "Månadskostnad: --",
   "monthlyCost.production": "Export",
