@@ -271,7 +271,7 @@ function renderMonthlyCost(monthlyCost) {
         : '';
     const throughDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(monthlyCost.throughDate || '');
     const cutoff = monthlyCostCutoff(monthlyCost.throughAt);
-    const dateLabel = cutoff ? `${cutoff}:` : (throughDate ? `${Number(throughDate[3])}/${Number(throughDate[2])}:` : '');
+    const dateLabel = cutoff ? `${cutoff.split(' ')[0]}:` : (throughDate ? `${Number(throughDate[3])}/${Number(throughDate[2])}:` : '');
     totalNode.textContent = [monthLabel, dateLabel, total].filter(Boolean).join(' ');
 
     const itemsNode = document.createElement('span');

@@ -41,12 +41,12 @@ const cost = {
 };
 context.renderMonthlyCost(cost);
 const output = nodes.get('monthlyCost');
-assert.match(output.children[0].textContent, /september 17\/9 13:00: [−-]10,00 SEK/i);
+assert.match(output.children[0].textContent, /september 17\/9: [−-]10,00 SEK/i);
 assert.equal(output.children[2].title, 'Förbrukning: 17/9 13:00 · Export: 17/9 12:00');
 context.renderMonthlyCost({ ...cost, throughAt: undefined });
 assert.match(output.children[0].textContent, /september 17\/9: [−-]10,00 SEK/i);
 assert.doesNotMatch(output.children[0].textContent, /13:00/);
 context.renderMonthlyCost({ ...cost, monthlyFee: 49, monthCost: 39 });
-assert.match(output.children[0].textContent, /september 17\/9 13:00: 39,00 SEK/i);
+assert.match(output.children[0].textContent, /september 17\/9: 39,00 SEK/i);
 assert.equal(output.children[2].textContent, 'Förbrukning 20,00 SEK - Export 30,00 SEK + Månadsavg. 49,00 SEK');
 console.log('Monthly cost label checks passed');
