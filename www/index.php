@@ -1048,7 +1048,8 @@ function normalizeSnapshot(array $energyFlowResponse, array $realtimeResponse, s
     $soc = numberFrom($flow, ['batterySoc', 'soc']);
     $load = numberFrom($flow, ['loadPower', 'load']);
     if ($load === null && $pv !== null && $battery !== null && $grid !== null) {
-        $load = max(0, $pv + max(0, -$grid) + max(0, -$battery));
+        // Exclude export and battery charging from the household load.
+        $load = max(0, $pv - $grid - $battery);
     }
 
     return [
@@ -1140,7 +1141,7 @@ function demoSnapshot(string $message, string $region, string $systemId): array
     $pv = round(7.4 * $sun, 2);
     $load = round(1.2 + ($hour >= 17 && $hour <= 21 ? 1.7 : 0.4), 2);
     $battery = round($pv > $load ? min(3.2, $pv - $load) : -min(2.4, $load - $pv), 2);
-    $grid = round($load + $battery - $pv, 2);
+    $grid = round($pv - $load - $battery, 2);
 
     return [
         'ok' => false,

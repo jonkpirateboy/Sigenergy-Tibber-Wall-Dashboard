@@ -101,21 +101,25 @@ function availableBatteryKwh(flow, capacityKwh, reservePercent) {
 
 function batteryOnlyRuntime(flow, capacityKwh, reservePercent) {
     const load = Math.max(0, Number(flow.loadPower || 0));
+    const gridExport = Math.max(0, Number(flow.gridPower || 0));
+    const demand = load + gridExport;
     const batteryKwh = availableBatteryKwh(flow, capacityKwh, reservePercent);
 
-    if (load <= 0.05) return t('runtime.noLoad');
+    if (demand <= 0.05) return t('runtime.noLoad');
     if (batteryKwh <= 0.05) return t('runtime.batteryEmpty');
 
-    return formatRuntime(batteryKwh / load);
+    return formatRuntime(batteryKwh / demand);
 }
 
 function solarBatteryRuntime(flow, capacityKwh, reservePercent) {
     const load = Math.max(0, Number(flow.loadPower || 0));
+    const gridExport = Math.max(0, Number(flow.gridPower || 0));
+    const demand = load + gridExport;
     const pv = Math.max(0, Number(flow.pvPower || 0));
-    const batteryLoad = Math.max(0, load - pv);
+    const batteryLoad = Math.max(0, demand - pv);
     const batteryKwh = availableBatteryKwh(flow, capacityKwh, reservePercent);
 
-    if (load <= 0.05) return t('runtime.noLoad');
+    if (demand <= 0.05) return t('runtime.noLoad');
     if (batteryLoad <= 0.05) return t('runtime.infinity');
     if (batteryKwh <= 0.05) return t('runtime.batteryEmpty');
 

@@ -80,7 +80,7 @@ The price breakpoints are used to color the graph points.
 The footer shows the month's net cost, followed by consumption cost, export profit and the subscription fee. For example, in Swedish:
 
 ```text
-September 13/9: 676,65 SEK Förbrukning 842,35 SEK - Export 214,70 SEK + Månadsavg. 49,00 SEK
+September 13/9: 676.65 SEK Consumption 842.35 SEK - Export 214.70 SEK + Monthly fee 49.00 SEK
 ```
 
 The net cost is consumption cost plus the subscription fee minus export profit. The fee is included in `.monthly-cost-total` and shown as an addition in `.monthly-cost-items` whenever an amount is available. The fee comes from the difference between `consumption.pageInfo.totalCost` and the sum of its node costs, using one full-month DAILY page so hourly pagination and daylight saving time cannot duplicate or omit fees. No fee amount is hardcoded. While the current month reports a zero or missing fee, the previous month's positive API fee is used as an estimate. If that month also lacks a fee, the last known fee in the local price cache is retained. A newly reported fee replaces the estimate. The JSON records `monthlyFee`, `monthlyFeeSourceMonth` and `monthlyFeeEstimated`; historical months keep their own reported fee, including zero. Older cached data without fee metadata retains its previous total until refreshed.
@@ -364,12 +364,27 @@ The current flow model uses these signs:
 
 The dashboard displays:
 
-- `Inkommande`: solar and grid import
-- `Användning`: solar, battery, grid and export
-- `Batteri`: battery percentage and runtime estimates
-- `Elpris`: current electricity price and graphs for today/tomorrow
+- `Incoming`: solar and grid import
+- `Usage`: solar, battery, grid and export
+- `Battery`: battery percentage and runtime estimates
+- `Electricity price`: current electricity price and graphs for today/tomorrow
 
 Flow bar widths are normalized so they fill the available width even below 1 kW. When solar is the only visible incoming source, it fills the entire incoming bar. The usage bar can still include blank space when displayed usage and export are lower than incoming power.
+
+Battery runtime estimates use energy above `SIGEN_BATTERY_RESERVE_PERCENT`:
+
+- `Battery only`: remaining usable energy divided by household load plus grid export.
+- `Solar + battery`: the same demand, reduced by current solar production. If solar covers that demand, the estimate is infinite.
+- `Until full`: energy needed to reach 100% divided by measured net battery charging power. During discharge it shows `Not charging`; export must not be subtracted again.
+
+The first two estimates assume no grid import and constant household load, export and (for `Solar + battery`) solar production. They are not forecasts of future dispatch or sunlight. If the API omits household load, it is derived as solar minus signed grid power minus signed battery power, so export and charging are not counted as household consumption.
+
+Run the battery calculation checks with:
+
+```bash
+node tests/battery-runtime.js
+php tests/energy-flow.php
+```
 
 ## Monthly Cost Checks
 
