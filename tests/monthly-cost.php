@@ -150,6 +150,35 @@ check(withCachedTibberMonthlyFee($reported, $estimated) === $reported, 'A new re
 check(withCachedTibberMonthlyFee($octoberPending, null) === $octoberPending, 'No cached fee must not invent an amount');
 check(withCachedTibberMonthlyFee($octoberPending, array_replace($estimated, ['currency' => 'EUR'])) === $octoberPending, 'Do not carry a fee in a different currency');
 check(withCachedTibberMonthlyFee($octoberPending, array_replace($estimated, ['monthlyFeeSourceMonth' => '2026-11'])) === $octoberPending, 'Do not carry a future fee into an earlier month');
+$historyCalls = 0;
+$historyRequest = function ($method, $url, $body, $token) use (&$historyCalls): array {
+    $historyCalls++;
+    check($method === 'POST' && $url === 'https://api.tibber.com/v1-beta/gql' && $token === 'test-token', 'Use the configured Tibber credentials and endpoint');
+    check(str_contains($body['query'], 'month2: consumption(resolution: DAILY, first: 31, after: "' . base64_encode('2026-08-01T00:00:00+02:00') . '")'), 'Search August with the complete month in Stockholm time');
+    check(substr_count($body['query'], ': consumption(') === 11, 'Bound the recovery to one request covering months two through twelve');
+    return ['data' => ['viewer' => ['homes' => [[], [
+        'month2' => ['pageInfo' => ['totalCost' => 149], 'nodes' => [['from' => '2026-08-01T00:00:00+02:00', 'cost' => 100, 'currency' => 'SEK']]],
+        'month3' => ['pageInfo' => ['totalCost' => 139], 'nodes' => [['from' => '2026-07-01T00:00:00+02:00', 'cost' => 100, 'currency' => 'SEK']]],
+    ]]]]];
+};
+$recovered = withHistoricalTibberMonthlyFee($octoberPending, 'test-token', 1, $timezone, $historyRequest);
+check($recovered['monthlyFee'] === 49.0 && $recovered['monthCost'] === 129.0, 'Recover the fee on a server whose cached fee is zero');
+check($recovered['monthlyFeeEstimated'] && $recovered['monthlyFeeSourceMonth'] === '2026-08', 'Prefer the most recent positive historical fee and retain its provenance');
+check($recovered['consumptionCost'] === $octoberPending['consumptionCost'] && $recovered['productionProfit'] === $octoberPending['productionProfit'] && $recovered['throughAt'] === $octoberPending['throughAt'], 'Fee recovery must preserve current energy data and cutoffs');
+check(withHistoricalTibberMonthlyFee($recovered, 'test-token', 1, $timezone, $historyRequest) === $recovered && $historyCalls === 1, 'A recovered cached fee must avoid another history request');
+check(withHistoricalTibberMonthlyFee($reported, 'test-token', 1, $timezone, $historyRequest) === $reported && $historyCalls === 1, 'A current reported fee must avoid history lookup');
+check(withHistoricalTibberMonthlyFee($octoberPending, 'test-token', 0, $timezone, $historyRequest) === $octoberPending, 'Do not use another home\'s fee');
+$unavailableHistory = fn () => ['errors' => [['message' => 'Unavailable']]];
+check(withHistoricalTibberMonthlyFee($octoberPending, 'test-token', 1, $timezone, $unavailableHistory) === $octoberPending, 'Missing history must not invent a fee or discard current totals');
+$failedHistory = function () { throw new RuntimeException('Network unavailable'); };
+check(withHistoricalTibberMonthlyFee($octoberPending, 'test-token', 1, $timezone, $failedHistory) === $octoberPending, 'A failed history request must preserve current totals');
+$yearBoundaryQuery = '';
+$yearBoundaryRequest = function ($method, $url, $body) use (&$yearBoundaryQuery): array {
+    $yearBoundaryQuery = $body['query'];
+    return [];
+};
+withHistoricalTibberMonthlyFee(array_replace($octoberPending, ['month' => '2027-01']), 'test-token', 0, $timezone, $yearBoundaryRequest);
+check(str_contains($yearBoundaryQuery, base64_encode('2026-11-01T00:00:00+01:00')), 'History lookup must cross the year boundary in Stockholm time');
 $empty['previousMonthlyConsumption'] = $pendingFee['previousMonthlyConsumption'];
 check(normalizeTibberMonthlyCost($empty, $timezone, $month, true) === null, 'A previous fee must not turn an empty month into current energy data');
 echo "Monthly cost checks passed\n";

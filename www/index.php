@@ -548,13 +548,59 @@ function getTibberMonthlyCost(string $apiKey, int $homeIndex): ?array
         $month = new DateTimeImmutable('first day of this month 00:00:00', $timezone);
         $monthlyCost = fetchTibberMonthCost($apiKey, $homeIndex, $month, $timezone, true);
         if ($monthlyCost !== null) {
-            return withCachedTibberMonthlyFee($monthlyCost, readElectricityPriceCache()['monthlyCost'] ?? null);
+            $monthlyCost = withCachedTibberMonthlyFee($monthlyCost, readElectricityPriceCache()['monthlyCost'] ?? null);
+            return withHistoricalTibberMonthlyFee($monthlyCost, $apiKey, $homeIndex, $timezone);
         }
 
         return fetchTibberMonthCost($apiKey, $homeIndex, $month->modify('-1 month'), $timezone);
     } catch (Throwable) {
         return null;
     }
+}
+
+function withHistoricalTibberMonthlyFee(array $monthlyCost, string $apiKey, int $homeIndex, DateTimeZone $timezone, ?callable $request = null): array
+{
+    $fee = $monthlyCost['monthlyFee'] ?? null;
+    if ($fee !== null && $fee != 0.0) {
+        return $monthlyCost;
+    }
+
+    // The preceding month and cache have already been checked. Recover a lost
+    // estimate from up to a year of monthly pages in one additional request.
+    $month = new DateTimeImmutable($monthlyCost['month'] . '-01T00:00:00', $timezone);
+    $fields = [];
+    $months = [];
+    for ($offset = 2; $offset <= 12; $offset++) {
+        $previous = $month->modify('-' . $offset . ' months');
+        $alias = 'month' . $offset;
+        $months[$alias] = $previous;
+        $cursor = json_encode(base64_encode($previous->format(DATE_ATOM)));
+        $fields[] = $alias . ': consumption(resolution: DAILY, first: ' . $previous->format('t') . ', after: ' . $cursor . ') { pageInfo { totalCost } nodes { from cost currency } }';
+    }
+
+    try {
+        $request ??= 'apiRequest';
+        $response = $request('POST', 'https://api.tibber.com/v1-beta/gql', [
+            'query' => '{ viewer { homes { ' . implode(' ', $fields) . ' } } }',
+        ], $apiKey);
+        $home = $response['data']['viewer']['homes'][$homeIndex] ?? [];
+        foreach ($months as $alias => $previous) {
+            $connection = $home[$alias] ?? [];
+            $monthlyCost = withCachedTibberMonthlyFee($monthlyCost, [
+                'monthlyFee' => tibberMonthlyFee($connection, $previous, $timezone),
+                'monthlyFeeSourceMonth' => $previous->format('Y-m'),
+                'currency' => monthNodeCurrency($connection['nodes'] ?? [], []),
+                'dataSource' => 'tibber-api',
+            ]);
+            if (($monthlyCost['monthlyFee'] ?? 0.0) > 0.0) {
+                break;
+            }
+        }
+    } catch (Throwable) {
+        // An optional fee lookup must not discard current energy totals.
+    }
+
+    return $monthlyCost;
 }
 
 function withCachedTibberMonthlyFee(array $monthlyCost, ?array $cached): array
